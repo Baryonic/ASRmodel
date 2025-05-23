@@ -22,3 +22,4 @@
 - can read .wav files in /audios
 - understands in different languages if trained by different datasets
 - reads transcription out loud
+- tries to use the gpu, uses cpu if gpu cant be used

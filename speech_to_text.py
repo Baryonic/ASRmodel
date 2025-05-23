@@ -17,26 +17,18 @@ print("\033[92mdatasets and libraries imported")
 def main():
     print("\n\033[38;2;255;200;189mRunning main method...\n")
     
-    # Hugging Face authentication
     hugging_face_login()
-
-    # Select audio file from 'audios' folder
     audio_path = select_audio_file()
-
-    # Preprocess audio
     waveform, sample_rate = preprocess_audio(audio_path)
-
-    # Debugging: Print the shape of the waveform and sample rate
     print(f"\033[33mWaveform after preprocessing: \033[92m{waveform.shape}")
     print(f"\033[33mSample rate after preprocessing: \033[92m{sample_rate}")
 
-    # Perform transcription and get the text
-    transcription = transcribe_audio(waveform, sample_rate)
+    # Get both transcription and device
+    transcription, device = transcribe_audio(waveform, sample_rate)
 
-    # Save transcription to file
-    save_transcription(audio_path, transcription)
+    # Pass device info to save_transcription
+    save_transcription(audio_path, transcription, device)
 
-    # Read text (text-to-speech)
     read_text(transcription)
 
 def select_audio_file():
@@ -105,59 +97,50 @@ def preprocess_audio(audio_path):
 def transcribe_audio(waveform, sample_rate):
     """
     Perform speech-to-text transcription using Wav2Vec2.
-    Returns the transcription text.
+    Returns the transcription text and device used.
     """
     print("\n\033[38;2;255;200;189mLoading Wav2Vec2 model and processor...\033[33m")
-    model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-base-960h")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-base-960h").to(device)
     processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
 
-    # Debugging: Confirm model loading
-    print("\033[95mModel and processor successfully loaded!")
+    print(f"\033[95mModel and processor successfully loaded! Using device: {device}")
 
-    # Add a batch dimension to the waveform
-    waveform = waveform.unsqueeze(0)  # Shape becomes [1, sequence_length]
-    print(f"\033[33mWaveform shape after adding batch dimension: \033[92m{waveform.shape}")
-
-    # Preprocess the waveform using the processor
-    print("\033[38;2;255;200;189mPreprocessing waveform for Wav2Vec2...")
+    waveform = waveform.unsqueeze(0)
     input_values = processor(
         waveform, 
         sampling_rate=sample_rate, 
         return_tensors="pt", 
         padding="longest"
-    ).input_values  # Shape: [1, 1, sequence_length]
-    print(f"\033[33mInput values shape before squeezing: \033[92m{input_values.shape}")
+    ).input_values
+    input_values = input_values.squeeze(1)
+    input_values = input_values.to(device)
 
-    # Remove unnecessary dimensions
-    input_values = input_values.squeeze(1)  # Shape becomes [1, sequence_length]
-    print(f"\033[33mInput values shape after squeezing: \033[92m{input_values.shape}")
-
-    # Perform inference
     print("\033[38;2;255;200;189mPerforming inference...")
-    logits = model(input_values).logits
-    print(f"\033[33mLogits shape: \033[92m{logits.shape}")
+    with torch.no_grad():
+        logits = model(input_values).logits
 
-    # Decode the logits to obtain the transcription
-    print("\033[38;2;255;200;189mDecoding logits to text...\033[93mThese action may take a few minutes depending on the length of the audio file")
     predicted_ids = torch.argmax(logits, dim=-1)
     transcription = processor.decode(predicted_ids[0])
     print(f"\n\033[33mTranscription: \033[96m{transcription}")
-    return transcription
+    return transcription, str(device)
 
-def save_transcription(audio_path, transcription):
+def save_transcription(audio_path, transcription, device):
     """
-    Save the transcription to a text file in the /transcriptions/ folder.
-    The filename will be: <audio_filename>_<YYYYMMDD_HHMMSS>.txt
+    Save the transcription and device info to a text file in the /transcriptions folder.
     """
     transcriptions_dir = os.path.join(os.path.dirname(__file__), "transcriptions")
     os.makedirs(transcriptions_dir, exist_ok=True)
-    audio_filename = os.path.splitext(os.path.basename(audio_path))[0]
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    txt_filename = f"{audio_filename}_{timestamp}.txt"
-    txt_path = os.path.join(transcriptions_dir, txt_filename)
-    with open(txt_path, "w", encoding="utf-8") as f:
+    base = os.path.splitext(os.path.basename(audio_path))[0]
+    output_file = os.path.join(transcriptions_dir, f"{base}_transcription.txt")
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write("Transcription Report\n")
+        f.write("===================\n")
+        f.write(f"Audio file: {audio_path}\n")
+        f.write(f"Device used for processing: {device.upper()}\n")
+        f.write("\nTranscription:\n")
         f.write(transcription)
-    print(f"\033[92mTranscription saved to: \033[94m{txt_path}\033[0m")
+    print(f"\033[32mTranscription and device info saved to {output_file}\033[0m")
 
 def read_text(text):
     """
